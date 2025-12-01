@@ -13,6 +13,7 @@ from app.core.exceptions import (
 from fastapi.exceptions import RequestValidationError
 from app.api.routes import chat, history
 from app.database.connection import create_pool, close_pool
+from app.services.cache.adapter import cache_adapter
 
 
 @asynccontextmanager
@@ -20,11 +21,15 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup/shutdown events"""
     # Startup
     logger.info("Starting application...")
+    logger.info(f"Database type: {settings.DATABASE_TYPE}, Cache type: {settings.CACHE_TYPE}")
     await create_pool()
     logger.info("Database connection pool created")
+    await cache_adapter.initialize()
+    logger.info("Cache initialized")
     yield
     # Shutdown
     logger.info("Shutting down application...")
+    await cache_adapter.close()
     await close_pool()
     logger.info("Database connection pool closed")
 

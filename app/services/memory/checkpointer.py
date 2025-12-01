@@ -1,15 +1,15 @@
-"""Custom PostgreSQL checkpointer for LangGraph"""
+"""Custom database checkpointer for LangGraph (supports SQLite and PostgreSQL)"""
 import json
 from uuid import uuid4, UUID
 from typing import Optional, Dict, Any
 from langgraph.checkpoint.base import BaseCheckpointSaver, Checkpoint, CheckpointMetadata
-from app.database.connection import get_connection, execute_query, execute_command
+from app.database.adapter import db_adapter
 from app.database.queries import CREATE_CHECKPOINT, GET_LATEST_CHECKPOINT
 from app.core.logging import logger
 
 
-class PostgresCheckpointer(BaseCheckpointSaver):
-    """PostgreSQL-based checkpointer for LangGraph state"""
+class DatabaseCheckpointer(BaseCheckpointSaver):
+    """Database-based checkpointer for LangGraph state (supports SQLite and PostgreSQL)"""
     
     async def put(
         self,
@@ -18,7 +18,7 @@ class PostgresCheckpointer(BaseCheckpointSaver):
         metadata: CheckpointMetadata,
         new_versions: Dict[str, Any]
     ) -> None:
-        """Save checkpoint to PostgreSQL"""
+        """Save checkpoint to database"""
         try:
             thread_id = config.get("configurable", {}).get("thread_id")
             if not thread_id:
@@ -35,14 +35,15 @@ class PostgresCheckpointer(BaseCheckpointSaver):
             }
             
             checkpoint_id = uuid4()
+            thread_uuid = UUID(thread_id) if isinstance(thread_id, str) else thread_id
+            state_json = json.dumps(state_dict)
             
-            async with get_connection() as conn:
-                await conn.execute(
-                    CREATE_CHECKPOINT,
-                    checkpoint_id,
-                    UUID(thread_id) if isinstance(thread_id, str) else thread_id,
-                    json.dumps(state_dict)
-                )
+            await db_adapter.execute_command(
+                CREATE_CHECKPOINT,
+                checkpoint_id,
+                thread_uuid,
+                state_json
+            )
             
             logger.debug(f"Checkpoint saved for thread {thread_id}")
         except Exception as e:
@@ -53,17 +54,17 @@ class PostgresCheckpointer(BaseCheckpointSaver):
         self,
         config: Dict[str, Any]
     ) -> Optional[Checkpoint]:
-        """Load checkpoint from PostgreSQL"""
+        """Load checkpoint from database"""
         try:
             thread_id = config.get("configurable", {}).get("thread_id")
             if not thread_id:
                 return None
             
-            async with get_connection() as conn:
-                row = await conn.fetchrow(
-                    GET_LATEST_CHECKPOINT,
-                    UUID(thread_id) if isinstance(thread_id, str) else thread_id
-                )
+            thread_uuid = UUID(thread_id) if isinstance(thread_id, str) else thread_id
+            row = await db_adapter.fetchrow(
+                GET_LATEST_CHECKPOINT,
+                thread_uuid
+            )
             
             if not row:
                 return None

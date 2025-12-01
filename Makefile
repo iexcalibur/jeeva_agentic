@@ -1,4 +1,4 @@
-.PHONY: help install install-backend install-frontend dev dev-backend dev-frontend build build-backend build-frontend start start-backend start-frontend stop clean db-init db-migrate test test-backend test-frontend docker-up docker-down
+.PHONY: help install install-backend install-frontend dev dev-backend dev-frontend build build-backend build-frontend start start-backend start-frontend stop clean db-init db-migrate test test-backend test-frontend docker-up docker-stop docker-down check-docker check-postgres
 
 # Default target
 .DEFAULT_GOAL := help
@@ -7,7 +7,63 @@
 BLUE := \033[0;34m
 GREEN := \033[0;32m
 YELLOW := \033[0;33m
+RED := \033[0;31m
 NC := \033[0m # No Color
+
+# Helper function to check and start Docker
+check-docker:
+	@if ! docker info > /dev/null 2>&1; then \
+		echo "$(YELLOW)Docker is not running. Starting Docker Desktop...$(NC)"; \
+		open -a Docker 2>/dev/null || (echo "$(RED)Error: Docker Desktop not found. Please install Docker Desktop from https://www.docker.com/products/docker-desktop$(NC)" && exit 1); \
+		echo "$(YELLOW)Waiting for Docker to start...$(NC)"; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			if docker info > /dev/null 2>&1; then \
+				echo "$(GREEN)✓ Docker is running$(NC)"; \
+				break; \
+			fi; \
+			sleep 2; \
+		done; \
+		if ! docker info > /dev/null 2>&1; then \
+			echo "$(RED)Error: Docker failed to start. Please start Docker Desktop manually.$(NC)"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "$(GREEN)✓ Docker is running$(NC)"; \
+	fi
+
+# Helper function to check and start PostgreSQL
+check-postgres: check-docker
+	@POSTGRES_CONTAINER=$$(docker ps -a --format '{{.Names}}' | grep -E '(postgres|jeeva_agentic.*postgres)' | head -1); \
+	if [ -z "$$POSTGRES_CONTAINER" ]; then \
+		echo "$(YELLOW)PostgreSQL container not found. Starting PostgreSQL...$(NC)"; \
+		docker-compose up postgres -d || (echo "$(RED)Error: Failed to start PostgreSQL container$(NC)" && exit 1); \
+		echo "$(YELLOW)Waiting for PostgreSQL to be healthy...$(NC)"; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			if docker ps --format '{{.Names}} {{.Status}}' | grep -E '(postgres|jeeva_agentic.*postgres)' | grep -q 'healthy'; then \
+				echo "$(GREEN)✓ PostgreSQL is running and healthy$(NC)"; \
+				break; \
+			fi; \
+			[ $$i -eq 10 ] && echo "$(YELLOW)PostgreSQL is still starting...$(NC)"; \
+			sleep 2; \
+		done; \
+	elif ! docker ps --format '{{.Names}} {{.Status}}' | grep -E '(postgres|jeeva_agentic.*postgres)' | grep -q 'healthy'; then \
+		if docker ps -a --format '{{.Names}} {{.Status}}' | grep -E '(postgres|jeeva_agentic.*postgres)' | grep -q 'Exited'; then \
+			echo "$(YELLOW)PostgreSQL container is stopped. Starting...$(NC)"; \
+			docker-compose up postgres -d || docker start $$POSTGRES_CONTAINER; \
+			sleep 5; \
+		else \
+			echo "$(YELLOW)PostgreSQL container exists but not healthy. Waiting...$(NC)"; \
+			for i in 1 2 3 4 5; do \
+				if docker ps --format '{{.Names}} {{.Status}}' | grep -E '(postgres|jeeva_agentic.*postgres)' | grep -q 'healthy'; then \
+					echo "$(GREEN)✓ PostgreSQL is running and healthy$(NC)"; \
+					break; \
+				fi; \
+				sleep 2; \
+			done; \
+		fi; \
+	else \
+		echo "$(GREEN)✓ PostgreSQL is running and healthy$(NC)"; \
+	fi
 
 help: ## Show this help message
 	@echo "$(BLUE)Jeeva Agentic - Makefile Commands$(NC)"
@@ -18,8 +74,8 @@ help: ## Show this help message
 	@echo "  make install-frontend     - Install frontend Node.js dependencies"
 	@echo ""
 	@echo "$(GREEN)Development:$(NC)"
-	@echo "  make dev                  - Start both backend and frontend in development mode"
-	@echo "  make dev-backend          - Start only backend API server"
+	@echo "  make dev                  - Start both backend and frontend (SQLite + in-memory cache)"
+	@echo "  make dev-backend          - Start only backend API server (SQLite + in-memory cache)"
 	@echo "  make dev-frontend         - Start only frontend development server"
 	@echo ""
 	@echo "$(GREEN)Production:$(NC)"
@@ -33,8 +89,9 @@ help: ## Show this help message
 	@echo "  make db-migrate           - Run database migrations"
 	@echo ""
 	@echo "$(GREEN)Docker:$(NC)"
-	@echo "  make docker-up             - Start services with Docker Compose"
-	@echo "  make docker-down           - Stop Docker services"
+	@echo "  make docker-up             - Start services with Docker Compose (PostgreSQL + Redis)"
+	@echo "  make docker-stop           - Stop Docker services (keeps containers)"
+	@echo "  make docker-down           - Stop and remove Docker services"
 	@echo ""
 	@echo "$(GREEN)Testing:$(NC)"
 	@echo "  make test                 - Run all tests"
@@ -63,41 +120,50 @@ install-frontend: ## Install frontend Node.js dependencies
 	@echo "$(GREEN)✓ Frontend dependencies installed$(NC)"
 
 # Development
-dev: ## Start both backend and frontend in development mode
+dev: ## Start both backend and frontend in development mode (SQLite + in-memory cache)
 	@echo "$(BLUE)Starting development servers...$(NC)"
+	@echo "$(YELLOW)Mode: SQLite + In-Memory Cache$(NC)"
 	@echo "$(YELLOW)Backend: http://localhost:8000$(NC)"
 	@echo "$(YELLOW)Frontend: http://localhost:3000$(NC)"
 	@echo "$(YELLOW)Press Ctrl+C to stop all services$(NC)"
-	@trap 'kill 0' EXIT; \
+	@cleanup() { \
+		echo ""; \
+		echo "$(YELLOW)Stopping all services...$(NC)"; \
+		pkill -f "uvicorn app.main:app" 2>/dev/null || true; \
+		pkill -f "next dev" 2>/dev/null || true; \
+		echo "$(GREEN)✓ All services stopped$(NC)"; \
+		exit 0; \
+	}; \
+	trap cleanup INT TERM EXIT; \
 	make dev-backend & \
+	BACKEND_PID=$$!; \
 	make dev-frontend & \
-	wait
+	FRONTEND_PID=$$!; \
+	wait $$BACKEND_PID $$FRONTEND_PID || true; \
+	trap - INT TERM EXIT
 
-dev-backend: ## Start backend API server
-	@echo "$(BLUE)Starting backend server...$(NC)"
+dev-backend: ## Start backend API server (SQLite + in-memory cache)
+	@echo "$(BLUE)Starting backend server (SQLite mode)...$(NC)"
 	@if [ ! -d "venv" ]; then \
 		echo "$(YELLOW)Virtual environment not found. Run 'make install-backend' first$(NC)"; \
 		exit 1; \
 	fi
 	@. venv/bin/activate && \
 	if [ ! -f ".env" ]; then \
-		echo "$(YELLOW)Creating .env file...$(NC)"; \
+		echo "$(YELLOW)Creating .env file for SQLite mode...$(NC)"; \
 		cat > .env << 'EOF' \
-DATABASE_URL=postgresql://chatbot_user:chatbot_pass@localhost:5432/chatbot_db \
-POSTGRES_HOST=localhost \
-POSTGRES_PORT=5432 \
-POSTGRES_USER=chatbot_user \
-POSTGRES_PASSWORD=chatbot_pass \
-POSTGRES_DB=chatbot_db \
+DATABASE_TYPE=sqlite \
+CACHE_TYPE=memory \
+SQLITE_DB_PATH=chatbot.db \
 ANTHROPIC_API_KEY=your_anthropic_api_key_here \
 LOG_LEVEL=INFO \
 DEBUG=false \
 EOF \
 		echo "$(YELLOW)⚠️  Please update ANTHROPIC_API_KEY in .env file$(NC)"; \
 	fi; \
-	docker-compose up postgres -d 2>/dev/null || true; \
-	sleep 2; \
-	python scripts/init_db.py 2>/dev/null || true; \
+	echo "$(YELLOW)Initializing SQLite database schema...$(NC)"; \
+	PYTHONPATH=$$(pwd) python scripts/init_db.py 2>/dev/null || echo "$(YELLOW)Database may already be initialized$(NC)"; \
+	echo "$(GREEN)Starting FastAPI server...$(NC)"; \
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 dev-frontend: ## Start frontend development server
@@ -132,24 +198,32 @@ start-frontend: ## Start frontend in production mode
 	@cd frontend && npm run start
 
 # Database
-db-init: ## Initialize database schema
+db-init: ## Initialize database schema (SQLite for dev, PostgreSQL for docker)
 	@echo "$(BLUE)Initializing database...$(NC)"
-	@. venv/bin/activate && python scripts/init_db.py
+	@. venv/bin/activate && PYTHONPATH=$$(pwd) python scripts/init_db.py
 
 db-migrate: ## Run database migrations
 	@echo "$(BLUE)Running database migrations...$(NC)"
 	@. venv/bin/activate && python scripts/run_migrations.py
 
 # Docker
-docker-up: ## Start services with Docker Compose
-	@echo "$(BLUE)Starting Docker services...$(NC)"
+docker-up: check-docker ## Start services with Docker Compose (PostgreSQL + Redis)
+	@echo "$(BLUE)Starting Docker services (PostgreSQL + Redis)...$(NC)"
 	@docker-compose up --build -d
 	@echo "$(GREEN)✓ Docker services started$(NC)"
+	@echo "$(YELLOW)PostgreSQL: localhost:5432$(NC)"
+	@echo "$(YELLOW)Redis: localhost:6379$(NC)"
+	@echo "$(YELLOW)Backend API: http://localhost:8000$(NC)"
 
-docker-down: ## Stop Docker services
-	@echo "$(BLUE)Stopping Docker services...$(NC)"
+docker-down: ## Stop and remove Docker services (removes containers and volumes)
+	@echo "$(BLUE)Stopping and removing Docker services...$(NC)"
 	@docker-compose down
-	@echo "$(GREEN)✓ Docker services stopped$(NC)"
+	@echo "$(GREEN)✓ Docker services stopped and removed$(NC)"
+
+docker-stop: ## Stop Docker services but keep containers (data preserved)
+	@echo "$(BLUE)Stopping Docker services...$(NC)"
+	@docker-compose stop
+	@echo "$(GREEN)✓ Docker services stopped (containers preserved)$(NC)"
 
 # Testing
 test: test-backend ## Run all tests
@@ -171,6 +245,7 @@ stop: ## Stop all running services
 	@echo "$(BLUE)Stopping services...$(NC)"
 	@pkill -f "uvicorn app.main:app" 2>/dev/null || true
 	@pkill -f "next dev" 2>/dev/null || true
-	@docker-compose down 2>/dev/null || true
+	@docker-compose stop postgres redis 2>/dev/null || true
 	@echo "$(GREEN)✓ All services stopped$(NC)"
+	@echo "$(YELLOW)Note: Docker containers are stopped but not removed. Run 'make docker-down' to remove them.$(NC)"
 

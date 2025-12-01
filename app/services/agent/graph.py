@@ -2,15 +2,15 @@
 from langgraph.graph import StateGraph, END
 from app.services.agent.state import AgentState
 from app.services.agent.nodes import route_persona, execute_persona, save_context
-from app.services.memory.checkpointer import PostgresCheckpointer
+from app.services.memory.checkpointer import DatabaseCheckpointer
 from app.core.logging import logger
 
 
 def create_agent():
-    """Create and compile LangGraph agent with PostgreSQL checkpointer"""
+    """Create and compile LangGraph agent with database checkpointer"""
     try:
-        # Create checkpointer
-        checkpointer = PostgresCheckpointer()
+        # Create checkpointer (supports both SQLite and PostgreSQL)
+        checkpointer = DatabaseCheckpointer()
         
         # Create state graph
         workflow = StateGraph(AgentState)
