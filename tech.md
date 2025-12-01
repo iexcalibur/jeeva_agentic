@@ -85,10 +85,6 @@ jeeva_agentic/
 │   │   ├── app/
 │   │   │   ├── chat/
 │   │   │   │   └── page.tsx            # Chat interface page
-│   │   │   ├── funds/                  # Legacy fund pages (can be removed)
-│   │   │   │   ├── [fundId]/
-│   │   │   │   │   └── page.tsx
-│   │   │   │   └── page.tsx
 │   │   │   ├── globals.css              # Global styles
 │   │   │   ├── layout.tsx               # Root layout
 │   │   │   └── page.tsx                 # Home page
@@ -98,10 +94,6 @@ jeeva_agentic/
 │   │   │   │   ├── ChatInput.tsx       # Message input component
 │   │   │   │   ├── ChatMessage.tsx     # Message display component
 │   │   │   │   ├── WelcomeMessage.tsx   # Welcome screen
-│   │   │   │   ├── CitationChip.tsx     # Citation display (legacy)
-│   │   │   │   ├── FundAnalysisResults.tsx  # Fund analysis (legacy)
-│   │   │   │   ├── FundInsightCard.tsx  # Fund insights (legacy)
-│   │   │   │   ├── FundMetricsUtils.ts  # Fund utilities (legacy)
 │   │   │   │   └── index.ts            # Component exports
 │   │   │   └── Header.tsx               # Navigation header
 │   │   │
@@ -337,16 +329,26 @@ class ChatResponse(BaseModel):
 ```typescript
 """Message display component"""
 # - Shows user and AI messages
-# - Displays persona badge with color coding
+# - Displays persona badge with color coding (mentor, investor, technical_advisor, business_expert)
 # - Handles message formatting and styling
+# - Shows loading and error states
 ```
 
 #### **`frontend/src/components/chat/ChatInput.tsx`**
 ```typescript
 """Message input component"""
 # - Text input for user messages
-# - Submit handler
-# - Loading state management
+# - Submit handler for sending messages
+# - Loading state management during API calls
+# - Placeholder text for user guidance
+```
+
+#### **`frontend/src/components/chat/WelcomeMessage.tsx`**
+```typescript
+"""Welcome screen component"""
+# - Initial welcome message when chat is empty
+# - Quick action suggestions for users
+# - Onboarding guidance
 ```
 
 #### **`frontend/package.json`**
