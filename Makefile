@@ -161,8 +161,12 @@ DEBUG=false \
 EOF \
 		echo "$(YELLOW)⚠️  Please update ANTHROPIC_API_KEY in .env file$(NC)"; \
 	fi; \
-	echo "$(YELLOW)Initializing SQLite database schema...$(NC)"; \
-	PYTHONPATH=$$(pwd) python scripts/init_db.py 2>/dev/null || echo "$(YELLOW)Database may already be initialized$(NC)"; \
+	echo "$(YELLOW)Ensuring SQLite database schema is initialized...$(NC)"; \
+	if PYTHONPATH=$$(pwd) python scripts/init_db.py 2>&1; then \
+		echo "$(GREEN)✓ Database schema initialized$(NC)"; \
+	else \
+		echo "$(YELLOW)⚠️  Database initialization had issues, but continuing (schema will be auto-initialized on startup)$(NC)"; \
+	fi; \
 	echo "$(GREEN)Starting FastAPI server...$(NC)"; \
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 

@@ -1,6 +1,7 @@
 """Database adapter supporting both SQLite and PostgreSQL"""
 import aiosqlite
 import asyncpg
+import re
 from uuid import UUID
 from typing import Union, Optional, Any, Dict
 from contextlib import asynccontextmanager
@@ -82,16 +83,33 @@ class DatabaseAdapter:
                 await connection.execute("PRAGMA foreign_keys = ON")
                 yield connection
     
+    def _convert_query_for_sqlite(self, query: str) -> str:
+        """Convert PostgreSQL query to SQLite-compatible query"""
+        sqlite_query = query
+        
+        # Convert PostgreSQL functions to SQLite equivalents
+        sqlite_query = sqlite_query.replace("NOW()", "CURRENT_TIMESTAMP")
+        sqlite_query = sqlite_query.replace("::jsonb", "")  # SQLite doesn't have jsonb type, just TEXT
+        
+        # Convert parameter placeholders ($1, $2, etc. to ?)
+        # Find all parameter placeholders and replace them in reverse order to avoid conflicts
+        param_matches = list(re.finditer(r'\$(\d+)', sqlite_query))
+        if param_matches:
+            # Replace in reverse order to maintain positions
+            for match in reversed(param_matches):
+                param_num = match.group(1)
+                sqlite_query = sqlite_query[:match.start()] + "?" + sqlite_query[match.end():]
+        
+        return sqlite_query
+    
     async def execute_query(self, query: str, *args):
         """Execute a SELECT query"""
         async with self.get_connection() as conn:
             if self.db_type == "postgresql":
                 return await conn.fetch(query, *args)
             else:  # SQLite
-                # Convert PostgreSQL-style $1, $2 to SQLite-style ?
-                sqlite_query = query
-                for i in range(len(args), 0, -1):
-                    sqlite_query = sqlite_query.replace(f"${i}", "?")
+                # Convert PostgreSQL query to SQLite
+                sqlite_query = self._convert_query_for_sqlite(query)
                 # Convert UUID objects to strings for SQLite
                 sqlite_args = [str(arg) if isinstance(arg, UUID) else arg for arg in args]
                 cursor = await conn.execute(sqlite_query, sqlite_args)
@@ -106,10 +124,8 @@ class DatabaseAdapter:
             if self.db_type == "postgresql":
                 return await conn.execute(query, *args)
             else:  # SQLite
-                # Convert PostgreSQL-style $1, $2 to SQLite-style ?
-                sqlite_query = query
-                for i in range(len(args), 0, -1):
-                    sqlite_query = sqlite_query.replace(f"${i}", "?")
+                # Convert PostgreSQL query to SQLite
+                sqlite_query = self._convert_query_for_sqlite(query)
                 # Convert UUID objects to strings for SQLite
                 sqlite_args = [str(arg) if isinstance(arg, UUID) else arg for arg in args]
                 cursor = await conn.execute(sqlite_query, sqlite_args)
@@ -123,12 +139,15 @@ class DatabaseAdapter:
             if self.db_type == "postgresql":
                 return await conn.fetchrow(query, *args)
             else:  # SQLite
-                sqlite_query = query
-                for i in range(len(args), 0, -1):
-                    sqlite_query = sqlite_query.replace(f"${i}", "?")
+                # Convert PostgreSQL query to SQLite
+                sqlite_query = self._convert_query_for_sqlite(query)
                 # Convert UUID objects to strings for SQLite
                 sqlite_args = [str(arg) if isinstance(arg, UUID) else arg for arg in args]
                 cursor = await conn.execute(sqlite_query, sqlite_args)
+                # Check if this is a modification query (INSERT/UPDATE/DELETE) and commit if so
+                query_upper = sqlite_query.strip().upper()
+                if any(query_upper.startswith(cmd) for cmd in ('INSERT', 'UPDATE', 'DELETE')):
+                    await conn.commit()
                 row = await cursor.fetchone()
                 if not row:
                     return None

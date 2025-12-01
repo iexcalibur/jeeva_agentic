@@ -25,18 +25,57 @@ async def run_migrations():
     
     async with db_adapter.get_connection() as conn:
         logger.info(f"Running migration: {migration_file.name}")
+        
+        # For SQLite, temporarily disable foreign key checks during table creation
+        if db_adapter.db_type == "sqlite":
+            await conn.execute("PRAGMA foreign_keys = OFF")
+        
         with open(migration_file, "r") as f:
             sql = f.read()
-            # Execute each statement separately (SQLite doesn't support multiple statements in one execute)
-            statements = [s.strip() for s in sql.split(";") if s.strip() and not s.strip().startswith("--")]
+            # Execute each statement separately
+            # Split by semicolon, but be careful with comments and multi-line statements
+            statements = []
+            current_statement = []
+            for line in sql.split('\n'):
+                line = line.strip()
+                # Skip empty lines and full-line comments
+                if not line or line.startswith('--'):
+                    continue
+                # Remove inline comments
+                if '--' in line:
+                    line = line[:line.index('--')].strip()
+                current_statement.append(line)
+                # If line ends with semicolon, it's the end of a statement
+                if line.endswith(';'):
+                    stmt = ' '.join(current_statement).rstrip(';').strip()
+                    if stmt:
+                        statements.append(stmt)
+                    current_statement = []
+            
+            # Handle any remaining statement without trailing semicolon
+            if current_statement:
+                stmt = ' '.join(current_statement).strip()
+                if stmt:
+                    statements.append(stmt)
+            
+            # Execute statements one by one
             for statement in statements:
                 if statement:
-                    if db_adapter.db_type == "postgresql":
+                    try:
                         await conn.execute(statement)
-                    else:  # SQLite
-                        await conn.execute(statement)
-            if db_adapter.db_type == "sqlite":
-                await conn.commit()
+                    except Exception as e:
+                        # If it's a "table already exists" error, that's okay
+                        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                            logger.debug(f"Table/Index already exists, skipping: {statement[:50]}...")
+                        else:
+                            logger.error(f"Error executing statement: {statement[:100]}...")
+                            raise
+        
+        # Re-enable foreign keys for SQLite
+        if db_adapter.db_type == "sqlite":
+            await conn.execute("PRAGMA foreign_keys = ON")
+            await conn.commit()
+        
         logger.info(f"Completed migration: {migration_file.name}")
 
 
