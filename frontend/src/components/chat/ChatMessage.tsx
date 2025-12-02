@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { Sparkles, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatMessage as ChatMessageType, Persona } from '@/types';
 
 const PERSONA_CONFIG: Record<Persona, { name: string; icon: string; color: string }> = {
@@ -59,7 +61,31 @@ export default function ChatMessage({ message }: ChatMessageProps) {
               <p className="text-xs mt-2 text-rose-500/70">{message.error}</p>
             </div>
           ) : (
-            <p className="leading-relaxed text-[15px] whitespace-pre-wrap">{message.content}</p>
+            <div className="leading-relaxed text-[15px] prose prose-invert prose-sm max-w-none">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+                  strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+                  em: ({ children }) => <em className="italic">{children}</em>,
+                  ul: ({ children }) => <ul className="list-disc list-inside mb-3 space-y-1">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal list-inside mb-3 space-y-1">{children}</ol>,
+                  li: ({ children }) => <li className="ml-4">{children}</li>,
+                  code: ({ children }) => (
+                    <code className="bg-slate-800/50 px-1.5 py-0.5 rounded text-sm font-mono text-indigo-300">
+                      {children}
+                    </code>
+                  ),
+                  pre: ({ children }) => (
+                    <pre className="bg-slate-800/50 p-3 rounded-lg overflow-x-auto mb-3">
+                      {children}
+                    </pre>
+                  ),
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            </div>
           )}
         </div>
       </div>
