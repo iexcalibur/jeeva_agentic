@@ -8,7 +8,8 @@ def create_claude_llm(temperature: float = 0.7) -> ChatAnthropic:
     """Create and configure Claude LLM instance"""
     try:
         llm = ChatAnthropic(
-            model="claude-3-5-sonnet-20241022",
+            # UPDATED: Using the active Claude Sonnet 4.5 model
+            model="claude-sonnet-4-5-20250929",
             temperature=temperature,
             anthropic_api_key=settings.ANTHROPIC_API_KEY
         )
@@ -17,4 +18,3 @@ def create_claude_llm(temperature: float = 0.7) -> ChatAnthropic:
     except Exception as e:
         logger.error(f"Failed to create Claude LLM: {str(e)}")
         raise
-

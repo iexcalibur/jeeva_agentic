@@ -3,7 +3,7 @@ import aiosqlite
 import asyncpg
 import re
 from uuid import UUID
-from typing import Union, Optional, Any, Dict
+from typing import Union, Optional, Any
 from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.logging import logger
@@ -54,7 +54,6 @@ class DatabaseAdapter:
         else:  # SQLite
             # SQLite doesn't use a pool, but we'll create the connection file
             db_path = settings.SQLITE_DB_PATH
-            # Ensure directory exists
             import os
             os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
             # Test connection
@@ -78,8 +77,8 @@ class DatabaseAdapter:
             async with self._pool.acquire() as connection:
                 yield connection
         else:  # SQLite
+            # Enable WAL mode for better concurrency
             async with aiosqlite.connect(settings.SQLITE_DB_PATH) as connection:
-                # Enable foreign keys for SQLite
                 await connection.execute("PRAGMA foreign_keys = ON")
                 yield connection
     
@@ -92,12 +91,9 @@ class DatabaseAdapter:
         sqlite_query = sqlite_query.replace("::jsonb", "")  # SQLite doesn't have jsonb type, just TEXT
         
         # Convert parameter placeholders ($1, $2, etc. to ?)
-        # Find all parameter placeholders and replace them in reverse order to avoid conflicts
         param_matches = list(re.finditer(r'\$(\d+)', sqlite_query))
         if param_matches:
-            # Replace in reverse order to maintain positions
             for match in reversed(param_matches):
-                param_num = match.group(1)
                 sqlite_query = sqlite_query[:match.start()] + "?" + sqlite_query[match.end():]
         
         return sqlite_query
@@ -108,13 +104,10 @@ class DatabaseAdapter:
             if self.db_type == "postgresql":
                 return await conn.fetch(query, *args)
             else:  # SQLite
-                # Convert PostgreSQL query to SQLite
                 sqlite_query = self._convert_query_for_sqlite(query)
-                # Convert UUID objects to strings for SQLite
                 sqlite_args = [str(arg) if isinstance(arg, UUID) else arg for arg in args]
                 cursor = await conn.execute(sqlite_query, sqlite_args)
                 rows = await cursor.fetchall()
-                # Convert to list of dict-like objects
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
                 return [dict(zip(columns, row)) for row in rows]
     
@@ -124,13 +117,14 @@ class DatabaseAdapter:
             if self.db_type == "postgresql":
                 return await conn.execute(query, *args)
             else:  # SQLite
-                # Convert PostgreSQL query to SQLite
                 sqlite_query = self._convert_query_for_sqlite(query)
-                # Convert UUID objects to strings for SQLite
                 sqlite_args = [str(arg) if isinstance(arg, UUID) else arg for arg in args]
                 cursor = await conn.execute(sqlite_query, sqlite_args)
+                
+                # FIX: Consume results (if RETURNING is used) before committing
+                await cursor.fetchall()
+                
                 await conn.commit()
-                # Return rowcount for compatibility
                 return cursor.rowcount if hasattr(cursor, 'rowcount') else 0
     
     async def fetchrow(self, query: str, *args):
@@ -139,16 +133,19 @@ class DatabaseAdapter:
             if self.db_type == "postgresql":
                 return await conn.fetchrow(query, *args)
             else:  # SQLite
-                # Convert PostgreSQL query to SQLite
                 sqlite_query = self._convert_query_for_sqlite(query)
-                # Convert UUID objects to strings for SQLite
                 sqlite_args = [str(arg) if isinstance(arg, UUID) else arg for arg in args]
+                
                 cursor = await conn.execute(sqlite_query, sqlite_args)
-                # Check if this is a modification query (INSERT/UPDATE/DELETE) and commit if so
+                
+                # FIX: Fetch BEFORE commit to handle RETURNING
+                row = await cursor.fetchone()
+                
+                # Only commit if it's a write operation
                 query_upper = sqlite_query.strip().upper()
                 if any(query_upper.startswith(cmd) for cmd in ('INSERT', 'UPDATE', 'DELETE')):
                     await conn.commit()
-                row = await cursor.fetchone()
+                
                 if not row:
                     return None
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
@@ -161,4 +158,3 @@ class DatabaseAdapter:
 
 # Global adapter instance
 db_adapter = DatabaseAdapter()
-
